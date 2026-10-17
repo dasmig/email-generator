@@ -1,0 +1,20 @@
+Third-party data in resources/. Each dataset, its columns and how it is built
+are described in doc/data.md.
+
+countries.tsv
+  Country codes and populations copied from country-generator.
+
+providers.tsv
+  Seeded from the free_email_domains of the locales of Faker
+  (https://github.com/joke2k/faker), MIT licence; every weight, the global
+  webmail shares and the extra domains are curated for this library.
+
+fold.tsv
+  Built from Unicode decomposition of the Latin blocks (Unicode Character
+  Database) plus a few curated letters.
+
+words.tsv
+  Word lists copied from nickname-generator (same author and licence).
+
+particles.tsv, profiles.tsv, email_styles.tsv
+  Curated for this library.
