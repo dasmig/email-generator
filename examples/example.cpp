@@ -17,14 +17,14 @@ int main()
     for (int i = 0; i < 5; ++i)
     {
         const auto e = gen.get_email(dasmig::email_request{});
-        std::cout << "  " << e.country << "  " << e << '\n';
+        std::cout << "  " << e.country_code << "  " << e << '\n';
     }
 
     std::cout << "\nThe same name in five countries:\n";
     for (const char* c : {"US", "DE", "BR", "JP", "CN"})
     {
         const auto e = gen.get_email({.country = c, .given = "Zo\xC3\xAB", .family = "M\xC3\xBCller", .birth_year = 1988});
-        std::cout << "  " << c << "  " << e << "  (" << e.kind << ")\n";
+        std::cout << "  " << c << "  " << e << "  (" << (e.reserved ? "reserved" : e.kind) << ")\n";
     }
 
     std::cout << "\nSafe addresses for tests:\n";

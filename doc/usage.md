@@ -61,8 +61,9 @@ auto e = gen.get_email({.country = "DE", .given = "Zoë", .family = "Müller",
 e.address();   // "zoe.muller88@web.de"
 e.local;       // "zoe.muller88"
 e.domain;      // "web.de"
-e.kind;        // "free" (webmail), "isp" or "reserved"
-e.country;     // "DE"
+e.kind;        // "free" (webmail) or "isp"; empty for a reserved domain
+e.reserved;    // false
+e.country_code; // "DE" (ISO 3166-1 alpha-2, as in the other generators)
 ```
 
 - **Styles.** The country maps to a profile (Anglo, Germanic, Romance, Slavic, East Asian, Japan, Arabic, Brazil, default) that weights the shapes of the local part: `first.last`, `flast`, `last_first`, `first85`, `first.last1988`, the nickname alone, handles such as `quietfox42`. Only the styles the request can fill are eligible: a call with no names draws among the handle styles, a call with no birth year never produces a year.
@@ -73,7 +74,7 @@ e.country;     // "DE"
 
 ## Safe Addresses for Tests
 
-`safe = true` makes an address that cannot reach a real person: the domain is `example.com`, `example.net` or `example.org` (RFC 2606) and `kind` is `reserved`. The local part is unchanged.
+`safe = true` makes an address that cannot reach a real person: the domain is `example.com`, `example.net` or `example.org` (RFC 2606), `reserved` is true and `kind` is empty. `phone.reserved` means the same for numbers. The local part is unchanged.
 
 ## Seeding and Deterministic Generation
 

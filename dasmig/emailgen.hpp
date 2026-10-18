@@ -74,10 +74,11 @@ struct email_request
 class email
 {
   public:
-    std::string country; ///< ISO 3166-1 alpha-2 of the country whose style the address follows.
-    std::string local;   ///< The part before the `@`: `[a-z0-9._-]`, at most 64 characters.
-    std::string domain;  ///< The part after the `@`.
-    std::string kind;    ///< `free` (webmail), `isp` (a provider of the country) or `reserved` (RFC 2606).
+    std::string country_code; ///< ISO 3166-1 alpha-2 of the country whose style the address follows.
+    std::string local;        ///< The part before the `@`: `[a-z0-9._-]`, at most 64 characters.
+    std::string domain;       ///< The part after the `@`.
+    std::string kind;         ///< `free` (webmail) or `isp` (a provider of the country); empty for a reserved domain.
+    bool reserved{false};     ///< True when the domain is one RFC 2606 reserves (`example.com`, `.net`, `.org`): the `safe` option.
 
     /// @brief The address.
     /// @return `local@domain`.
@@ -102,18 +103,19 @@ class email
     void to_json(core::json_writer& w) const
     {
         w.begin_object()
-            .field("country", country)
+            .field("country_code", country_code)
             .field("address", address())
             .field("local", local)
             .field("domain", domain)
             .field("kind", kind)
+            .field("reserved", reserved)
             .key("signature");
         _signature.to_json(w);
         w.end_object();
     }
 
     /// @brief This address as a JSON document.
-    /// @return Compact JSON, for example `{"country":"DE","address":"...",...}`.
+    /// @return Compact JSON, for example `{"country_code":"DE","address":"...",...}`.
     [[nodiscard]] std::string to_json() const
     {
         core::json_writer w;
@@ -777,7 +779,7 @@ class emg
         {
             static constexpr std::array<std::string_view, 3> reserved{"example.com", "example.net", "example.org"};
             v.domain = std::string{reserved.at(core::uniform_int<std::size_t>(dr, 0, reserved.size() - 1))};
-            v.kind = "reserved";
+            v.reserved = true;
             return;
         }
         if (country.providers.empty() || (request.weighted && country.provider_weights.empty()))
@@ -800,7 +802,7 @@ class emg
 
         email v;
         v._signature = {.seed = call_seed, .data = data_hash()};
-        v.country = country.region;
+        v.country_code = country.region;
         v.local = render_local_(style, names, request, call);
         pick_domain_(v, request, country, call);
         return v;

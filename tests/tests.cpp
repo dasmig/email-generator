@@ -15,9 +15,9 @@
 // ---------------------------------------------------------------------------
 
 #define KAT_DATA_HASH 0x610eed0616363f24ULL
-#define KAT_EMAIL_JSON_1 R"({"country":"ET","address":"shatteringturtle85@outlook.com","local":"shatteringturtle85","domain":"outlook.com","kind":"free","signature":{"seed":"0000000000000001","data":"610eed0616363f24"}})"
-#define KAT_EMAIL_JSON_2 R"({"country":"BR","address":"ana.silva90@gmail.com","local":"ana.silva90","domain":"gmail.com","kind":"free","signature":{"seed":"0000000000000002","data":"610eed0616363f24"}})"
-#define KAT_EMAIL_HASH 0x3621ef170e1beebaULL
+#define KAT_EMAIL_JSON_1 R"({"country_code":"ET","address":"shatteringturtle85@outlook.com","local":"shatteringturtle85","domain":"outlook.com","kind":"free","reserved":false,"signature":{"seed":"0000000000000001","data":"610eed0616363f24"}})"
+#define KAT_EMAIL_JSON_2 R"({"country_code":"BR","address":"ana.silva90@gmail.com","local":"ana.silva90","domain":"gmail.com","kind":"free","reserved":false,"signature":{"seed":"0000000000000002","data":"610eed0616363f24"}})"
+#define KAT_EMAIL_HASH 0x87ffaab5596279f8ULL
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -125,7 +125,7 @@ TEST_CASE("email: to_json, signature and conversion", "[json]")
     REQUIRE(v.seed() == 99);
     REQUIRE(v.signature().data == gen.data_hash());
     const auto json = v.to_json();
-    REQUIRE(json.starts_with(R"({"country":")"));
+    REQUIRE(json.starts_with(R"({"country_code":")"));
     REQUIRE(json.find(R"("signature":{"seed":"0000000000000063")") != std::string::npos);
     dasmig::core::json_writer w;
     w.begin_array();
@@ -291,7 +291,8 @@ TEST_CASE("safe addresses use the reserved domains", "[email][safe]")
     {
         const auto e = gen.get_email({.given = "Ana", .family = "Souza", .safe = true}, s);
         REQUIRE(reserved.contains(e.domain));
-        REQUIRE(e.kind == "reserved");
+        REQUIRE(e.reserved);
+        REQUIRE(e.kind.empty());
         used.insert(e.domain);
     }
     REQUIRE(used == reserved);
@@ -375,7 +376,7 @@ TEST_CASE("email: countries are drawn by population by default", "[email][stats]
     int iceland = 0;
     for (std::uint64_t s = 0; s < draws; ++s)
     {
-        const auto c = gen.get_email({}, s).country;
+        const auto c = gen.get_email({}, s).country_code;
         india += c == "IN" ? 1 : 0;
         iceland += c == "IS" ? 1 : 0;
     }
