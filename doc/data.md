@@ -23,7 +23,7 @@ Built by `scripts/prepare_email.py`. All are curated for this library (rule 6) e
 | `particles.tsv` | `particle` | Curated list of family-name particles (`de`, `da`, `van`, `von`, `bin`, ...) that email names skip |
 | `profiles.tsv` | `region`, `profile` | Curated: which style profile a country uses (`anglo`, `germanic`, `romance`, `slavic`, `eastasian`, `japan`, `arabic`, `brazil`, `default`) |
 | `email_styles.tsv` | `profile`, `pattern`, `weight` | Curated. The shapes were modelled on Faker's username formats and on the name transforms of `nickname-generator`; the weights are a judgement. Separator variants (`.` `_` `-` none) are written out as rows, weighted per profile |
-| `providers.tsv` | `domain`, `country`, `kind`, `weight` | Seeded from Faker's locale `free_email_domains` (MIT), curated: global webmail under `*`, local domains per country, extra domains for countries Faker lacks. A row for a country replaces the `*` row of the same domain (weight 0 switches it off there). `kind` is `free` (webmail) or `isp` |
+| `providers.tsv` | `domain`, `country`, `kind`, `weight` | Seeded from Faker's locale `free_email_domains` (MIT), curated: global webmail under `*`, local domains per country, extra domains for countries Faker lacks. A row for a country replaces the `*` row of the same domain (weight 0 switches it off there). `kind` is `free` (webmail) or `isp` Eleven countries (DE, GB, RU, JP, KR, FR, IT, ES, BR, US, IN) have exact shares in percent (`SHARES` in the script), rounded from general knowledge of public market-share reports and not a survey: those countries get exactly the listed domains and every global domain they do not list has weight 0. A weight of 0 switches a domain off, in weighted and uniform draws alike |
 | `words.tsv` | `list`, `word` | Copied from `nickname-generator`: `adj` (adjectives), `animal`, `jp` (romaji), lowercased to `[a-z0-9]` |
 
 **Pattern language** (`email_styles.tsv`): `{f}` given name, `{l}` family name, `{fi}` `{li}` their initials, `{n}` nickname, `{y2}` `{y4}` birth year, `{r}` one to three random digits, `{r2}` two, `{adj}` `{animal}` `{jp}` a handle word, anything else a literal from `[a-z0-9._-]`. A style whose inputs are missing (no family name, no birth year, ...) is not eligible, so a call with no names draws among the handle styles.
@@ -40,7 +40,7 @@ A country (by population, stream `"country"`), a style of the country's profile 
 
 ## Known Limitations
 
-- The shares are plausible, not measured: no survey of real addresses was used. Treat the mix of styles and providers as realistic-looking, not statistically exact.
+- The shares are plausible, not measured: no survey of real addresses was used. The eleven countries in `SHARES` follow rounded market-share figures from memory; the others split Faker's lists evenly among their local domains. Treat the mix of styles and providers as realistic-looking, not statistically exact.
 - Faker's locale lists cover 32 countries; about 40 more were added by hand from general knowledge and have not been verified domain by domain. Other countries use the global webmail only.
 - Names in scripts other than Latin are not transliterated; pass the Latin form.
 - Only the first word of a given name and the first non-particle word of a family name are used.

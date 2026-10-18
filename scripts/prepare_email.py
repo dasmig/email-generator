@@ -108,6 +108,47 @@ EXTRA = {
     "RS": [("yahoo.com", "free", 1.0), ("eunet.rs", "isp", 0.7), ("ptt.rs", "isp", 0.4), ("sbb.rs", "isp", 0.4)],
     "AT": [("aon.at", "isp", 0.4), ("A1.net", "isp", 0.3)],
 }
+# Curated: approximate shares of the domains addresses use, in percent, for the countries whose
+# market is known well enough to set them directly (rounded from general knowledge of public
+# market-share reports, not a survey). A listed country gets exactly these domains; every global
+# domain it does not list is switched off there. The other countries keep the Faker-seeded lists.
+SHARES = {
+    "DE": {"gmail.com": 30, "gmx.de": 14, "gmx.net": 6, "web.de": 15, "t-online.de": 8, "hotmail.de": 4,
+           "outlook.com": 5, "outlook.de": 2, "yahoo.de": 3, "icloud.com": 6, "freenet.de": 2, "aol.de": 1,
+           "googlemail.com": 2, "proton.me": 2},
+    "GB": {"gmail.com": 36, "hotmail.co.uk": 7, "hotmail.com": 6, "outlook.com": 10, "yahoo.co.uk": 8,
+           "yahoo.com": 3, "icloud.com": 14, "btinternet.com": 4, "sky.com": 3, "live.co.uk": 3, "aol.com": 1,
+           "proton.me": 2, "talktalk.net": 1, "virginmedia.com": 1, "googlemail.com": 1},
+    "RU": {"mail.ru": 30, "yandex.ru": 28, "gmail.com": 22, "rambler.ru": 3, "bk.ru": 4, "inbox.ru": 3,
+           "list.ru": 3, "yahoo.com": 1, "outlook.com": 2, "icloud.com": 3, "proton.me": 1},
+    "JP": {"gmail.com": 40, "yahoo.co.jp": 12, "docomo.ne.jp": 9, "ezweb.ne.jp": 6, "softbank.ne.jp": 5,
+           "i.softbank.jp": 3, "icloud.com": 10, "outlook.com": 4, "hotmail.co.jp": 2, "nifty.com": 2,
+           "au.com": 4, "outlook.jp": 2, "proton.me": 1},
+    "KR": {"naver.com": 55, "gmail.com": 22, "daum.net": 8, "hanmail.net": 5, "nate.com": 3, "kakao.com": 2,
+           "icloud.com": 2, "outlook.com": 2, "hotmail.com": 1},
+    "FR": {"gmail.com": 35, "orange.fr": 10, "hotmail.fr": 8, "free.fr": 7, "outlook.fr": 4, "yahoo.fr": 6,
+           "sfr.fr": 5, "laposte.net": 4, "wanadoo.fr": 3, "icloud.com": 8, "live.fr": 3, "outlook.com": 3,
+           "bbox.fr": 2, "neuf.fr": 1, "proton.me": 1},
+    "IT": {"gmail.com": 50, "libero.it": 10, "hotmail.it": 7, "outlook.it": 5, "yahoo.it": 6, "virgilio.it": 4,
+           "tiscali.it": 2, "alice.it": 2, "icloud.com": 6, "live.it": 3, "outlook.com": 3, "tim.it": 1,
+           "fastwebnet.it": 1},
+    "ES": {"gmail.com": 57, "hotmail.com": 10, "hotmail.es": 8, "outlook.com": 7, "outlook.es": 3, "yahoo.es": 5,
+           "icloud.com": 6, "telefonica.net": 2, "movistar.es": 1, "proton.me": 1},
+    "BR": {"gmail.com": 62, "hotmail.com": 10, "outlook.com": 8, "yahoo.com.br": 6, "uol.com.br": 4,
+           "icloud.com": 4, "terra.com.br": 1, "live.com": 2, "ig.com.br": 1, "globo.com": 1, "proton.me": 1},
+    "US": {"gmail.com": 50, "yahoo.com": 12, "outlook.com": 9, "hotmail.com": 5, "icloud.com": 12, "aol.com": 3,
+           "comcast.net": 3, "att.net": 2, "verizon.net": 1, "proton.me": 2, "live.com": 1},
+    "IN": {"gmail.com": 72, "yahoo.com": 7, "outlook.com": 6, "hotmail.com": 3, "rediffmail.com": 4,
+           "yahoo.co.in": 4, "icloud.com": 2, "live.com": 1, "proton.me": 1},
+}
+# Providers that belong to an internet or mobile operator, not a webmail service.
+OPERATOR_DOMAINS = set("""
+t-online.de freenet.de btinternet.com sky.com talktalk.net virginmedia.com docomo.ne.jp ezweb.ne.jp
+softbank.ne.jp i.softbank.jp au.com nifty.com orange.fr free.fr sfr.fr wanadoo.fr bbox.fr neuf.fr tim.it alice.it
+tiscali.it virgilio.it fastwebnet.it telefonica.net movistar.es comcast.net att.net verizon.net uol.com.br
+bol.com.br terra.com.br ig.com.br
+""".split())
+
 LOCAL_SHARE = 5.0  # default total weight of a Faker list (global mass is 10)
 LOCAL_SHARE_BY = {"RU": 12, "UA": 10, "KR": 14, "DE": 12, "IT": 9, "FR": 8, "PL": 10, "CZ": 10, "SK": 10, "HU": 8,
                   "TR": 5, "IR": 8, "BG": 6, "RO": 6, "HR": 6, "MK": 5, "BA": 5, "SI": 5, "AT": 5, "CH": 5}
@@ -219,6 +260,15 @@ def provider_rows(faker):
             d = d.lower()
             rows = [r for r in rows if not (r[0] == d and r[1] == c)]
             rows.append((d, c, k, w))
+    # exact shares for the countries listed in SHARES
+    for c, shares in SHARES.items():
+        assert sum(shares.values()) == 100, (c, sum(shares.values()))
+        rows = [r for r in rows if r[1] != c]
+        for d, w in shares.items():
+            rows.append((d, c, "isp" if d in OPERATOR_DOMAINS else "free", w))
+        for d, _, _ in GLOBAL:
+            if d not in shares:
+                rows.append((d, c, "free", 0))
     return rows
 
 

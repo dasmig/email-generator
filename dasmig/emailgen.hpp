@@ -1024,6 +1024,8 @@ class emg
                         if (!replaced) c.providers.push_back(g);
                     }
                 }
+                // A weight of 0 switches a domain off: it is not drawn, weighted or not.
+                std::erase_if(c.providers, [](const provider_data& d) { return !(d.weight > 0.0); });
                 for (std::size_t k = 0; k < c.providers.size(); ++k) c.provider_weights.add(k, c.providers[k].weight);
             }
         }

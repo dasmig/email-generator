@@ -14,10 +14,10 @@
 // Recorded answers (see "Known answers" below); re-record them with the data.
 // ---------------------------------------------------------------------------
 
-#define KAT_DATA_HASH 0x2efa1c683c6caa57ULL
-#define KAT_EMAIL_JSON_1 R"({"country":"ET","address":"shatteringturtle85@outlook.com","local":"shatteringturtle85","domain":"outlook.com","kind":"free","signature":{"seed":"0000000000000001","data":"2efa1c683c6caa57"}})"
-#define KAT_EMAIL_JSON_2 R"({"country":"BR","address":"ana.silva90@gmail.com","local":"ana.silva90","domain":"gmail.com","kind":"free","signature":{"seed":"0000000000000002","data":"2efa1c683c6caa57"}})"
-#define KAT_EMAIL_HASH 0x1202b043899743fcULL
+#define KAT_DATA_HASH 0x610eed0616363f24ULL
+#define KAT_EMAIL_JSON_1 R"({"country":"ET","address":"shatteringturtle85@outlook.com","local":"shatteringturtle85","domain":"outlook.com","kind":"free","signature":{"seed":"0000000000000001","data":"610eed0616363f24"}})"
+#define KAT_EMAIL_JSON_2 R"({"country":"BR","address":"ana.silva90@gmail.com","local":"ana.silva90","domain":"gmail.com","kind":"free","signature":{"seed":"0000000000000002","data":"610eed0616363f24"}})"
+#define KAT_EMAIL_HASH 0x3621ef170e1beebaULL
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -290,6 +290,45 @@ TEST_CASE("domains follow the country", "[email][stats]")
     REQUIRE(cn["yahoo.com"] == 0); // switched off for China
     REQUIRE(us["gmail.com"] > draws / 3);
     REQUIRE(us["qq.com"] == 0);
+}
+
+TEST_CASE("domain shares follow the curated market shares", "[email][stats]")
+{
+    const auto gen = make_loaded_generator();
+    constexpr int draws = 20000;
+    const auto share = [&](const char* country, const std::vector<std::string>& domains) {
+        int hits = 0;
+        for (std::uint64_t s = 0; s < draws; ++s)
+        {
+            const auto d = gen.get_email({.country = country, .given = "Ana", .family = "Souza"}, s).domain;
+            hits += std::ranges::find(domains, d) != domains.end() ? 1 : 0;
+        }
+        return static_cast<double>(hits) / draws;
+    };
+    // The percentages are SHARES in scripts/prepare_email.py.
+    REQUIRE(share("DE", {"gmail.com"}) == Catch::Approx(0.30).margin(0.02));
+    REQUIRE(share("DE", {"web.de", "gmx.de", "gmx.net"}) == Catch::Approx(0.35).margin(0.02));
+    REQUIRE(share("DE", {"hotmail.com", "yahoo.com"}) == 0.0); // not listed for Germany: switched off
+    REQUIRE(share("JP", {"gmail.com"}) == Catch::Approx(0.40).margin(0.02));
+    REQUIRE(share("KR", {"naver.com"}) == Catch::Approx(0.55).margin(0.02));
+    REQUIRE(share("RU", {"mail.ru", "yandex.ru"}) == Catch::Approx(0.58).margin(0.02));
+    REQUIRE(share("IN", {"gmail.com"}) == Catch::Approx(0.72).margin(0.02));
+    // A country without its own list keeps the global webmail shares.
+    REQUIRE(share("IS", {"gmail.com"}) == Catch::Approx(0.50).margin(0.02));
+}
+
+TEST_CASE("a domain with weight 0 is never drawn, weighted or not", "[email][stats]")
+{
+    const auto gen = make_loaded_generator();
+    for (std::uint64_t s = 0; s < 3000; ++s)
+    {
+        for (const bool weighted : {true, false})
+        {
+            const auto d = gen.get_email({.country = "CN", .given = "Wei", .family = "Zhang", .weighted = weighted}, s).domain;
+            REQUIRE(d != "yahoo.com");
+            REQUIRE(d != "hotmail.com");
+        }
+    }
 }
 
 TEST_CASE("email: countries are drawn by population by default", "[email][stats]")
