@@ -303,8 +303,13 @@ class emg
     [[nodiscard]] bool has_data() const { return !_model.countries.empty(); }
 
     /// @brief Return the number of countries loaded.
-    /// @return The count.
+    /// @return The count; it is `countries().size()`.
     [[nodiscard]] std::size_t country_count() const { return _model.countries.size(); }
+
+    /// @brief The countries an address can be generated for.
+    /// @return Their ISO-3166 two-letter codes (upper case), in the order of countries.tsv; the
+    ///         list a request's `country` is chosen from.
+    [[nodiscard]] const std::vector<std::string>& countries() const { return _model.codes; }
 
     /// @brief Whether a country is loaded.
     /// @param country ISO-3166 two-letter code (any case).
@@ -546,6 +551,7 @@ class emg
     struct model
     {
         std::vector<country_data> countries;
+        std::vector<std::string> codes; // the same countries as their codes, in table order
         std::unordered_map<std::string, std::size_t> by_region;
         std::vector<std::vector<style_data>> profiles;               // styles by profile
         std::unordered_map<std::string, std::size_t> profile_index;
@@ -1054,6 +1060,7 @@ class emg
             c.region = upper_(row["region"]);
             c.population = std::max(row.get_or<double>("population", 1.0), 1.0);
             m.by_region.emplace(c.region, m.countries.size());
+            m.codes.push_back(c.region);
             m.countries.push_back(std::move(c));
         }
         for (std::size_t i = 0; i < m.countries.size(); ++i)

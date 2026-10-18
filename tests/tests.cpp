@@ -88,6 +88,22 @@ TEST_CASE("the full tier loads the territories too and every country draws an ad
     }
 }
 
+TEST_CASE("countries() lists the countries an address can be generated for", "[loading]")
+{
+    const auto gen = make_loaded_generator();
+    const auto& codes = gen.countries();
+    REQUIRE(codes.size() == gen.country_count());
+    REQUIRE(codes.size() == 195);
+    REQUIRE(std::ranges::find(codes, "DE") != codes.end());
+    for (const auto& code : codes)
+    {
+        REQUIRE(gen.has_country(code));
+        REQUIRE_NOTHROW(gen.get_email({.country = code}, std::uint64_t{1}));
+    }
+    dasmig::emg empty;
+    REQUIRE(empty.countries().empty());
+}
+
 TEST_CASE("load - non-existent path is a no-op", "[loading]")
 {
     dasmig::emg gen;
