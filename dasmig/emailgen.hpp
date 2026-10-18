@@ -50,9 +50,9 @@ struct email_request
     ///        and the provider domains.
     std::optional<std::string> country{std::nullopt};
 
-    std::string given{};    ///< Given name; empty when unknown.
-    std::string family{};   ///< Family name; empty when unknown.
-    std::string nickname{}; ///< Nickname or handle; empty when unknown.
+    std::string given{};    ///< Given name; empty when unknown. // NOLINT(readability-redundant-member-init): keeps -Wextra quiet for partial designated initializers
+    std::string family{};   ///< Family name; empty when unknown. // NOLINT(readability-redundant-member-init): keeps -Wextra quiet for partial designated initializers
+    std::string nickname{}; ///< Nickname or handle; empty when unknown. // NOLINT(readability-redundant-member-init): keeps -Wextra quiet for partial designated initializers
 
     /// @brief Birth year, for the `ana85` and `ana1985` styles; those styles
     ///        are left out when absent.
@@ -231,7 +231,7 @@ class emg
             auto cr = call.split("country");
             ci = request.weighted ? _model.all_population.pick(cr) : _model.all_uniform.pick(cr);
         }
-        return make_email_(request, ci, call_seed, call);
+        return make_email_(request, _model.countries[ci], call_seed, call);
     }
 
     /// @brief Generate a batch of email results from a seed drawn like
@@ -588,10 +588,20 @@ class emg
         return out;
     }
 
-    // Folds text to lowercase ASCII. With @p keep_marks (nicknames) the characters
-    // . _ - stay and everything else is dropped; otherwise every other character,
-    // and any letter without an ASCII form, becomes a space between name parts.
-    std::string fold_(std::string_view text, bool keep_marks) const
+    // An ASCII character as names fold it: letters in lowercase, digits kept; a mark stays in a
+    // nickname (@p keep_marks) and anything else is dropped there ('\0'); in a name every other
+    // character is a space between parts.
+    static char fold_ascii_(char c, bool keep_marks)
+    {
+        if (c >= 'A' && c <= 'Z') return static_cast<char>(c - 'A' + 'a');
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) return c;
+        if (keep_marks) return is_mark_(c) ? c : '\0';
+        return ' ';
+    }
+
+    // Folds text to lowercase ASCII (see fold_ascii_); a letter with no ASCII form is dropped in a
+    // nickname and is a space in a name.
+    [[nodiscard]] std::string fold_(std::string_view text, bool keep_marks) const
     {
         std::string out;
         for (std::size_t i = 0; i < text.size();)
@@ -601,16 +611,19 @@ class emg
             i += used;
             if (cp != 0 && cp < 0x80)
             {
-                const char c = static_cast<char>(cp);
-                if (c >= 'A' && c <= 'Z') out += static_cast<char>(c - 'A' + 'a');
-                else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) out += c;
-                else if (keep_marks && (c == '.' || c == '_' || c == '-')) out += c;
-                else if (!keep_marks) out += ' ';
+                const char c = fold_ascii_(static_cast<char>(cp), keep_marks);
+                if (c != '\0') out += c;
                 continue;
             }
             const auto f = cp == 0 ? _model.fold.end() : _model.fold.find(cp);
-            if (f != _model.fold.end()) out += f->second;
-            else if (!keep_marks) out += ' ';
+            if (f != _model.fold.end())
+            {
+                out += f->second;
+            }
+            else if (!keep_marks)
+            {
+                out += ' ';
+            }
         }
         return out;
     }
@@ -636,7 +649,7 @@ class emg
     }
 
     // First part of a given name; first part of a family name that is not a particle.
-    std::string name_part_(std::string_view text, bool family) const
+    [[nodiscard]] std::string name_part_(std::string_view text, bool family) const
     {
         auto parts = split_words_(fold_(text, false));
         if (family)
@@ -667,62 +680,82 @@ class emg
         for (int i = 0; i < count; ++i) out += static_cast<char>('0' + core::uniform_int(r, 0, 9));
     }
 
-    email make_email_(const email_request& request, std::size_t ci, std::uint64_t call_seed, const core::rng& call) const
+    // What the request gives for the local part, folded.
+    struct name_inputs
     {
-        const auto& country = _model.countries[ci];
-        const std::size_t pi = country.profile != none_ ? country.profile : default_profile_();
-        if (pi == none_ || _model.profiles[pi].empty()) throw std::runtime_error("No email styles loaded for " + country.region);
+        std::string given;
+        std::string family;
+        std::string nick;
+        bool year_ok{false};
+    };
 
-        const std::string given = name_part_(request.given, false);
-        const std::string family = name_part_(request.family, true);
-        const std::string nick = tidy_local_(fold_(request.nickname, true));
-        const bool year_ok = request.birth_year && *request.birth_year >= 1000 && *request.birth_year <= 9999;
+    [[nodiscard]] name_inputs read_names_(const email_request& request) const
+    {
+        name_inputs n;
+        n.given = name_part_(request.given, false);
+        n.family = name_part_(request.family, true);
+        n.nick = tidy_local_(fold_(request.nickname, true));
+        n.year_ok = request.birth_year && *request.birth_year >= 1000 && *request.birth_year <= 9999;
+        return n;
+    }
 
-        // The styles the inputs allow.
-        const auto fits = [&](const style_data& st) {
-            return (!st.needs_given || !given.empty()) && (!st.needs_family || !family.empty()) &&
-                   (!st.needs_nickname || !nick.empty()) && (!st.needs_year || year_ok) &&
-                   (!st.needs_words[0] || !_model.words[0].empty()) && (!st.needs_words[1] || !_model.words[1].empty()) &&
-                   (!st.needs_words[2] || !_model.words[2].empty()) && (!request.weighted || st.weight > 0.0);
-        };
-        const auto& styles = _model.profiles[pi];
-        double total = 0.0;
-        std::size_t last = none_;
-        for (std::size_t k = 0; k < styles.size(); ++k)
+    // Whether the inputs can fill the style; a weight of 0 switches a style off.
+    [[nodiscard]] bool style_fits_(const style_data& st, const name_inputs& n) const
+    {
+        const bool names = (!st.needs_given || !n.given.empty()) && (!st.needs_family || !n.family.empty()) &&
+                           (!st.needs_nickname || !n.nick.empty()) && (!st.needs_year || n.year_ok);
+        bool words = true;
+        for (std::size_t list = 0; list < st.needs_words.size(); ++list)
         {
-            if (!fits(styles[k])) continue;
-            total += request.weighted ? styles[k].weight : 1.0;
-            last = k;
+            words = words && (!st.needs_words.at(list) || !_model.words.at(list).empty());
         }
-        if (last == none_) throw std::runtime_error("get_email: no style fits the request in the profile of " + country.region);
+        return names && words && st.weight > 0.0;
+    }
+
+    // A style of the profile the inputs allow, by weight (or evenly when not weighted).
+    [[nodiscard]] const style_data& pick_style_(const std::vector<style_data>& styles, const name_inputs& n,
+                                                bool weighted, const core::rng& call,
+                                                const std::string& region) const
+    {
+        const auto share = [&](const style_data& st) { return weighted ? st.weight : 1.0; };
+        double total = 0.0;
+        const style_data* last = nullptr;
+        for (const auto& st : styles)
+        {
+            if (!style_fits_(st, n)) continue;
+            total += share(st);
+            last = &st;
+        }
+        if (last == nullptr) throw std::runtime_error("get_email: no style fits the request in the profile of " + region);
         auto sr = call.split("style");
         double x = core::uniform01(sr) * total;
-        std::size_t chosen = last;
-        for (std::size_t k = 0; k < styles.size(); ++k)
+        for (const auto& st : styles)
         {
-            if (!fits(styles[k])) continue;
-            x -= request.weighted ? styles[k].weight : 1.0;
-            if (x < 0.0)
-            {
-                chosen = k;
-                break;
-            }
+            if (!style_fits_(st, n)) continue;
+            x -= share(st);
+            if (x < 0.0) return st;
         }
+        return *last;
+    }
 
+    // The local part: the style's pieces filled in, then tidied.
+    [[nodiscard]] std::string render_local_(const style_data& style, const name_inputs& n, const email_request& request,
+                                            const core::rng& call) const
+    {
         auto lr = call.split("local");
         auto nr = call.split("number");
+        const auto initial = [](const std::string& text) { return text.substr(0, 1); };
         std::string local;
-        const auto initial = [](const std::string& s) { return s.substr(0, 1); };
-        for (const auto& t : styles[chosen].tokens)
+        for (const auto& t : style.tokens)
         {
             switch (t.kind)
             {
             case tok::lit: local += t.text; break;
-            case tok::f: local += given; break;
-            case tok::l: local += family; break;
-            case tok::fi: local += initial(given); break;
-            case tok::li: local += initial(family); break;
-            case tok::n: local += nick; break;
+            case tok::f: local += n.given; break;
+            case tok::l: local += n.family; break;
+            case tok::fi: local += initial(n.given); break;
+            case tok::li: local += initial(n.family); break;
+            case tok::n: local += n.nick; break;
             case tok::y2: local += std::format("{:02}", *request.birth_year % 100); break;
             case tok::y4: local += std::format("{:04}", *request.birth_year); break;
             case tok::r: append_digits_(local, nr, core::uniform_int(nr, 1, 3)); break;
@@ -733,34 +766,47 @@ class emg
             }
         }
         local = tidy_local_(local);
-        if (local.empty()) local = "user";
+        return local.empty() ? "user" : local;
+    }
 
-        email v;
-        v._signature = {.seed = call_seed, .data = data_hash()};
-        v.country = country.region;
-        v.local = std::move(local);
+    // The domain: a reserved one with safe, else one of the country's providers.
+    static void pick_domain_(email& v, const email_request& request, const country_data& country, const core::rng& call)
+    {
         auto dr = call.split("domain");
         if (request.safe)
         {
             static constexpr std::array<std::string_view, 3> reserved{"example.com", "example.net", "example.org"};
             v.domain = std::string{reserved.at(core::uniform_int<std::size_t>(dr, 0, reserved.size() - 1))};
             v.kind = "reserved";
+            return;
         }
-        else
+        if (country.providers.empty() || (request.weighted && country.provider_weights.empty()))
         {
-            if (country.providers.empty() || (request.weighted && country.provider_weights.empty()))
-            {
-                throw std::runtime_error("get_email: no provider domain for " + country.region);
-            }
-            const auto& p = country.providers[request.weighted ? country.provider_weights.pick(dr)
-                                                               : core::uniform_int<std::size_t>(dr, 0, country.providers.size() - 1)];
-            v.domain = p.domain;
-            v.kind = p.kind;
+            throw std::runtime_error("get_email: no provider domain for " + country.region);
         }
+        const auto& p = country.providers[request.weighted ? country.provider_weights.pick(dr)
+                                                           : core::uniform_int<std::size_t>(dr, 0, country.providers.size() - 1)];
+        v.domain = p.domain;
+        v.kind = p.kind;
+    }
+
+    [[nodiscard]] email make_email_(const email_request& request, const country_data& country, std::uint64_t call_seed,
+                                    const core::rng& call) const
+    {
+        const std::size_t pi = country.profile != none_ ? country.profile : default_profile_();
+        if (pi == none_ || _model.profiles[pi].empty()) throw std::runtime_error("No email styles loaded for " + country.region);
+        const auto names = read_names_(request);
+        const auto& style = pick_style_(_model.profiles[pi], names, request.weighted, call, country.region);
+
+        email v;
+        v._signature = {.seed = call_seed, .data = data_hash()};
+        v.country = country.region;
+        v.local = render_local_(style, names, request, call);
+        pick_domain_(v, request, country, call);
         return v;
     }
 
-    std::size_t default_profile_() const
+    [[nodiscard]] std::size_t default_profile_() const
     {
         const auto it = _model.profile_index.find("default");
         return it == _model.profile_index.end() ? none_ : it->second;
@@ -810,30 +856,56 @@ class emg
 
     // -- Row checks and the model -------------------------------------------
 
+    static void require_region_(const core::tsv_row& row)
+    {
+        if (row["region"].size() != 2) throw row.error("region", "must be an ISO 3166-1 alpha-2 code");
+    }
+
+    static void require_chars_(const core::tsv_row& row, std::string_view column, bool dots, std::string_view message)
+    {
+        for (const char c : row[column])
+        {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (dots && (c == '.' || c == '-'));
+            if (!ok) throw row.error(column, std::string{message});
+        }
+    }
+
+    static void validate_provider_(const core::tsv_row& row)
+    {
+        const auto domain = row["domain"];
+        if (!domain.contains('.') || domain.front() == '.' || domain.back() == '.')
+        {
+            throw row.error("domain", "must be a domain name, got '" + std::string{domain} + "'");
+        }
+        require_chars_(row, "domain", true, "must be lowercase letters, digits, dots and hyphens");
+        if (row["country"] != "*" && row["country"].size() != 2)
+        {
+            throw row.error("country", "must be '*' or an ISO 3166-1 alpha-2 code");
+        }
+        if (row["kind"] != "free" && row["kind"] != "isp") throw row.error("kind", "must be 'free' or 'isp'");
+        if (!(row.get<double>("weight") >= 0.0)) throw row.error("weight", "must not be negative");
+    }
+
     static void validate_(table t, const core::tsv_row& row)
     {
         switch (t)
         {
         case table::countries:
-        {
-            if (row["region"].size() != 2) throw row.error("region", "must be an ISO 3166-1 alpha-2 code");
+            require_region_(row);
             if (row.get_or<double>("population", 1.0) < 0.0) throw row.error("population", "must not be negative");
             break;
-        }
         case table::fold:
-        {
             if (decode_one_(row["from"]) == 0) throw row.error("from", "must be one character");
             for (const char c : row["to"])
             {
                 if (c < 'a' || c > 'z') throw row.error("to", "must be lowercase ASCII letters");
             }
             break;
-        }
         case table::particles:
             if (row["particle"].empty()) throw row.error("particle", "must not be empty");
             break;
         case table::profiles:
-            if (row["region"].size() != 2) throw row.error("region", "must be an ISO 3166-1 alpha-2 code");
+            require_region_(row);
             if (row["profile"].empty()) throw row.error("profile", "must not be empty");
             break;
         case table::email_styles:
@@ -841,42 +913,23 @@ class emg
             (void)parse_style_(row);
             break;
         case table::providers:
-        {
-            const auto domain = row["domain"];
-            if (domain.find('.') == std::string_view::npos || domain.front() == '.' || domain.back() == '.')
-            {
-                throw row.error("domain", "must be a domain name, got '" + std::string{domain} + "'");
-            }
-            for (const char c : domain)
-            {
-                if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-'))
-                {
-                    throw row.error("domain", "must be lowercase letters, digits, dots and hyphens");
-                }
-            }
-            if (row["country"] != "*" && row["country"].size() != 2) throw row.error("country", "must be '*' or an ISO 3166-1 alpha-2 code");
-            if (row["kind"] != "free" && row["kind"] != "isp") throw row.error("kind", "must be 'free' or 'isp'");
-            if (!(row.get<double>("weight") >= 0.0)) throw row.error("weight", "must not be negative");
+            validate_provider_(row);
             break;
-        }
         case table::words:
-        {
             if (word_list_(row) == none_) throw row.error("list", "must be 'adj', 'animal' or 'jp'");
-            const auto w = row["word"];
-            if (w.empty()) throw row.error("word", "must not be empty");
-            for (const char c : w)
-            {
-                if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) throw row.error("word", "must be lowercase letters and digits");
-            }
+            if (row["word"].empty()) throw row.error("word", "must not be empty");
+            require_chars_(row, "word", false, "must be lowercase letters and digits");
             break;
-        }
         }
     }
 
     static std::size_t word_list_(const core::tsv_row& row)
     {
         const auto l = row["list"];
-        return l == "adj" ? 0 : l == "animal" ? 1 : l == "jp" ? 2 : none_;
+        if (l == "adj") return 0;
+        if (l == "animal") return 1;
+        if (l == "jp") return 2;
+        return none_;
     }
 
     // The code point of a one-character UTF-8 string; 0 when it is not exactly one.
@@ -896,10 +949,25 @@ class emg
         if (c < 0x80) return c;
         std::size_t n = 0;
         std::uint32_t cp = 0;
-        if ((c & 0xE0U) == 0xC0U) { n = 2; cp = c & 0x1FU; }
-        else if ((c & 0xF0U) == 0xE0U) { n = 3; cp = c & 0x0FU; }
-        else if ((c & 0xF8U) == 0xF0U) { n = 4; cp = c & 0x07U; }
-        else return 0;
+        if ((c & 0xE0U) == 0xC0U)
+        {
+            n = 2;
+            cp = c & 0x1FU;
+        }
+        else if ((c & 0xF0U) == 0xE0U)
+        {
+            n = 3;
+            cp = c & 0x0FU;
+        }
+        else if ((c & 0xF8U) == 0xF0U)
+        {
+            n = 4;
+            cp = c & 0x07U;
+        }
+        else
+        {
+            return 0;
+        }
         if (i + n > text.size()) return 0;
         for (std::size_t k = 1; k < n; ++k)
         {
@@ -911,6 +979,36 @@ class emg
         return cp;
     }
 
+    // The pattern part named @p name, or false when there is none; notes in @p st what it needs.
+    static bool note_part_(std::string_view name, style_data& st, tok& kind)
+    {
+        using part = std::pair<std::string_view, tok>;
+        static constexpr std::array<part, 12> parts{{{"f", tok::f}, {"l", tok::l}, {"fi", tok::fi}, {"li", tok::li},
+                                                     {"n", tok::n}, {"y2", tok::y2}, {"y4", tok::y4}, {"r", tok::r},
+                                                     {"r2", tok::r2}, {"adj", tok::adj}, {"animal", tok::animal},
+                                                     {"jp", tok::jp}}};
+        const auto it = std::ranges::find(parts, name, &part::first);
+        if (it == parts.end()) return false;
+        kind = it->second;
+        switch (kind)
+        {
+        case tok::f:
+        case tok::fi: st.needs_given = true; break;
+        case tok::l:
+        case tok::li: st.needs_family = true; break;
+        case tok::n: st.needs_nickname = true; break;
+        case tok::y2:
+        case tok::y4: st.needs_year = true; break;
+        case tok::adj: st.needs_words[0] = true; break;
+        case tok::animal: st.needs_words[1] = true; break;
+        case tok::jp: st.needs_words[2] = true; break;
+        case tok::lit:
+        case tok::r:
+        case tok::r2: break;
+        }
+        return true;
+    }
+
     static style_data parse_style_(const core::tsv_row& row)
     {
         style_data st;
@@ -919,52 +1017,35 @@ class emg
         if (!(st.weight >= 0.0)) throw row.error("weight", "must not be negative");
         std::string lit;
         const auto flush = [&] {
-            if (!lit.empty()) st.tokens.push_back({tok::lit, std::move(lit)});
+            if (!lit.empty()) st.tokens.push_back({.kind = tok::lit, .text = std::move(lit)});
             lit.clear();
         };
         for (std::size_t i = 0; i < text.size(); ++i)
         {
             const char c = text[i];
-            if (c == '{')
+            if (c != '{')
             {
-                const auto close = text.find('}', i);
-                if (close == std::string_view::npos) throw row.error("pattern", "unclosed '{'");
-                const auto name = text.substr(i + 1, close - i - 1);
-                flush();
-                tok k{};
-                if (name == "f") { k = tok::f; st.needs_given = true; }
-                else if (name == "l") { k = tok::l; st.needs_family = true; }
-                else if (name == "fi") { k = tok::fi; st.needs_given = true; }
-                else if (name == "li") { k = tok::li; st.needs_family = true; }
-                else if (name == "n") { k = tok::n; st.needs_nickname = true; }
-                else if (name == "y2") { k = tok::y2; st.needs_year = true; }
-                else if (name == "y4") { k = tok::y4; st.needs_year = true; }
-                else if (name == "r") k = tok::r;
-                else if (name == "r2") k = tok::r2;
-                else if (name == "adj") { k = tok::adj; st.needs_words[0] = true; }
-                else if (name == "animal") { k = tok::animal; st.needs_words[1] = true; }
-                else if (name == "jp") { k = tok::jp; st.needs_words[2] = true; }
-                else throw row.error("pattern", "unknown part '{" + std::string{name} + "}'");
-                st.tokens.push_back({k, {}});
-                i = close;
-            }
-            else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')
-            {
+                const bool literal = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+                if (!literal) throw row.error("pattern", std::string{"unexpected '"} + c + "' in '" + std::string{text} + "'");
                 lit += c;
+                continue;
             }
-            else
-            {
-                throw row.error("pattern", std::string{"unexpected '"} + c + "' in '" + std::string{text} + "'");
-            }
+            const auto close = text.find('}', i);
+            if (close == std::string_view::npos) throw row.error("pattern", "unclosed '{'");
+            const auto name = text.substr(i + 1, close - i - 1);
+            flush();
+            tok kind{};
+            if (!note_part_(name, st, kind)) throw row.error("pattern", "unknown part '{" + std::string{name} + "}'");
+            st.tokens.push_back({.kind = kind, .text = {}});
+            i = close;
         }
         flush();
         if (st.tokens.empty()) throw row.error("pattern", "must not be empty");
         return st;
     }
 
-    static model build_model_(const tables& tbls)
+    static void read_countries_(model& m, const tables& tbls)
     {
-        model m;
         for (const auto& row : tbls.at(index_(table::countries)).rows())
         {
             country_data c;
@@ -973,8 +1054,15 @@ class emg
             m.by_region.emplace(c.region, m.countries.size());
             m.countries.push_back(std::move(c));
         }
+        for (std::size_t i = 0; i < m.countries.size(); ++i)
+        {
+            m.all_population.add(i, m.countries[i].population);
+            m.all_uniform.add(i, 1.0);
+        }
+    }
 
-        // The email data.
+    static void read_text_tables_(model& m, const tables& tbls)
+    {
         for (const auto& row : tbls.at(index_(table::fold)).rows())
         {
             m.fold[decode_one_(row["from"])] = std::string{row["to"]};
@@ -984,6 +1072,10 @@ class emg
         {
             m.words.at(word_list_(row)).emplace_back(row["word"]);
         }
+    }
+
+    static void read_styles_(model& m, const tables& tbls)
+    {
         for (const auto& row : tbls.at(index_(table::email_styles)).rows())
         {
             const std::string name{row["profile"]};
@@ -998,43 +1090,55 @@ class emg
         for (const auto& row : tbls.at(index_(table::profiles)).rows())
         {
             const auto it = m.by_region.find(upper_(row["region"]));
-            if (it == m.by_region.end()) throw row.error("region", "no country '" + std::string{row["region"]} + "' in countries.tsv");
+            if (it == m.by_region.end())
+            {
+                throw row.error("region", "no country '" + std::string{row["region"]} + "' in countries.tsv");
+            }
             const auto pi = m.profile_index.find(std::string{row["profile"]});
-            if (pi == m.profile_index.end()) throw row.error("profile", "no style for profile '" + std::string{row["profile"]} + "' in email_styles.tsv");
+            if (pi == m.profile_index.end())
+            {
+                throw row.error("profile", "no style for profile '" + std::string{row["profile"]} + "' in email_styles.tsv");
+            }
             m.countries[it->second].profile = pi->second;
         }
-        {
-            std::unordered_map<std::string, std::vector<provider_data>> by_country;
-            for (const auto& row : tbls.at(index_(table::providers)).rows())
-            {
-                by_country[upper_(row["country"])].push_back(
-                    {std::string{row["domain"]}, std::string{row["kind"]}, row.get<double>("weight")});
-            }
-            const auto global = by_country.find("*");
-            for (auto& c : m.countries)
-            {
-                const auto own = by_country.find(c.region);
-                if (own != by_country.end()) c.providers = own->second;
-                if (global != by_country.end())
-                {
-                    for (const auto& g : global->second)
-                    {
-                        const bool replaced = own != by_country.end() &&
-                                              std::ranges::any_of(own->second, [&](const provider_data& d) { return d.domain == g.domain; });
-                        if (!replaced) c.providers.push_back(g);
-                    }
-                }
-                // A weight of 0 switches a domain off: it is not drawn, weighted or not.
-                std::erase_if(c.providers, [](const provider_data& d) { return !(d.weight > 0.0); });
-                for (std::size_t k = 0; k < c.providers.size(); ++k) c.provider_weights.add(k, c.providers[k].weight);
-            }
-        }
-        for (std::size_t i = 0; i < m.countries.size(); ++i)
-        {
-            m.all_population.add(i, m.countries[i].population);
-            m.all_uniform.add(i, 1.0);
-        }
+    }
 
+    // Each country's providers: its own rows plus the global ones it does not replace, without the
+    // domains switched off by a weight of 0 (they are not drawn, weighted or not).
+    static void read_providers_(model& m, const tables& tbls)
+    {
+        std::unordered_map<std::string, std::vector<provider_data>> by_country;
+        for (const auto& row : tbls.at(index_(table::providers)).rows())
+        {
+            by_country[upper_(row["country"])].push_back(
+                {.domain = std::string{row["domain"]}, .kind = std::string{row["kind"]}, .weight = row.get<double>("weight")});
+        }
+        const auto global = by_country.find("*");
+        for (auto& c : m.countries)
+        {
+            const auto own = by_country.find(c.region);
+            if (own != by_country.end()) c.providers = own->second;
+            if (global != by_country.end())
+            {
+                for (const auto& g : global->second)
+                {
+                    const bool replaced = own != by_country.end() &&
+                                          std::ranges::any_of(own->second, [&](const provider_data& d) { return d.domain == g.domain; });
+                    if (!replaced) c.providers.push_back(g);
+                }
+            }
+            std::erase_if(c.providers, [](const provider_data& d) { return !(d.weight > 0.0); });
+            for (std::size_t k = 0; k < c.providers.size(); ++k) c.provider_weights.add(k, c.providers[k].weight);
+        }
+    }
+
+    static model build_model_(const tables& tbls)
+    {
+        model m;
+        read_countries_(m, tbls);
+        read_text_tables_(m, tbls);
+        read_styles_(m, tbls);
+        read_providers_(m, tbls);
         return m;
     }
 

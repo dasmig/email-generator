@@ -66,6 +66,28 @@ TEST_CASE("load(dataset::lite) loads the sovereign states", "[loading]")
     REQUIRE(gen.layers(dasmig::email_table::providers).size() == 1);
 }
 
+TEST_CASE("the full tier loads the territories too and every country draws an address", "[loading][full]")
+{
+    dasmig::emg gen;
+    for (const auto* candidate : {"resources/full", "../resources/full"})
+    {
+        if (std::filesystem::is_directory(candidate))
+        {
+            gen.load(std::filesystem::path{candidate});
+            break;
+        }
+    }
+    REQUIRE(gen.has_data());
+    REQUIRE(gen.country_count() == 250);
+    REQUIRE(gen.has_country("AQ"));
+    for (const auto* c : {"AQ", "AX", "GI", "PR", "GU", "VA", "BR", "US"})
+    {
+        const auto e = gen.get_email({.country = c, .given = "Ana", .family = "Souza"}, std::uint64_t{3});
+        REQUIRE_FALSE(e.local.empty());
+        REQUIRE_FALSE(e.domain.empty());
+    }
+}
+
 TEST_CASE("load - non-existent path is a no-op", "[loading]")
 {
     dasmig::emg gen;
@@ -327,6 +349,20 @@ TEST_CASE("a domain with weight 0 is never drawn, weighted or not", "[email][sta
             const auto d = gen.get_email({.country = "CN", .given = "Wei", .family = "Zhang", .weighted = weighted}, s).domain;
             REQUIRE(d != "yahoo.com");
             REQUIRE(d != "hotmail.com");
+        }
+    }
+}
+
+TEST_CASE("a style with weight 0 is never drawn, weighted or not", "[email][extend]")
+{
+    auto gen = make_loaded_generator();
+    gen.extend_from_string(dasmig::email_table::email_styles,
+                           "profile\tpattern\tweight\nbrazil\t{l}-{f}\t0\nbrazil\t{f}.{l}\t5\n", "off.tsv");
+    for (std::uint64_t s = 0; s < 3000; ++s)
+    {
+        for (const bool weighted : {true, false})
+        {
+            REQUIRE(gen.get_email({.country = "BR", .given = "Ana", .family = "Souza", .weighted = weighted}, s).local != "souza-ana");
         }
     }
 }
